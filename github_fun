@@ -1,0 +1,77 @@
+#!/usr/bin/env ruby
+
+require 'optparse'
+require 'optparse/date'
+
+options = {
+  dry_run: false,
+  commit_message: 'empty commit',
+  shade_multiplier: 3
+}
+OptionParser.new do |opts|
+  opts.banner = "Usage: #{__FILE__} [options]"
+
+  opts.on('-f', '--file FILE', String, 'Input file') do |f|
+    options[:file] = f
+  end
+
+  opts.on('-d', '--date DATE', Date, 'First commit on date') do |d|
+    options[:start_date] = d
+  end
+
+  opts.on('-m', '--message MESSAGE', String, 'Commit message') do |m|
+    options[:commit_message] = m
+  end
+
+  opts.on('--shade-multiplier M', Integer) do |m|
+    options[:shade_multiplier] = m
+  end
+
+  opts.on('--dry-run', 'Print commit commands only') do
+    options[:dry_run] = true
+  end
+
+  opts.on('-h', '--help', 'Prints this help') do
+    puts opts
+    exit
+  end
+end.parse!
+
+unless options[:start_date]&.sunday?
+  print "#{options[:start_date].strftime('%F')} is not a Sunday. Continue? [y|n] "
+  answer = $stdin.gets.chomp
+  exit if answer !~ /^y(es)?$/i
+end
+
+unless options[:file] && File.exist?(options[:file])
+  puts "Cannot find file #{options[:file]}"
+  exit
+end
+
+SHADES = (0..4).to_a
+
+def one_commit(date, message)
+  date_str = "#{date.strftime('%F')}T12:00:00"
+  "GIT_AUTHOR_DATE=#{date_str} GIT_COMMITTER_DATE=#{date_str} git commit --allow-empty -m #{message.inspect} > /dev/null"
+end
+
+shades_by_weeks = File.readlines(options[:file]).map { |line| line.split(',').map(&:strip).map(&:to_i) }.transpose
+
+cmds = []
+shades_by_weeks.flatten.each_with_index do |shade, i|
+  next if shade.zero?
+
+  date = options[:start_date] + i
+  cmds << ([one_commit(date, options[:commit_message])] * shade * options[:shade_multiplier])
+end
+cmds.flatten!
+
+if options[:dry_run]
+  puts cmds.join("\n")
+else
+  cmds.each_with_index do |cmd, i|
+    puts "Running commit #{i}/#{cmds.size}" if (i % 10).zero?
+    system(cmd)
+  end
+  puts 'DONE! Time to git push'
+end
